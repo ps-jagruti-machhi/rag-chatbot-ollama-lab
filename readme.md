@@ -57,7 +57,14 @@ pip install -r requirements.txt
 ```
 python run 1_scraping_wikipedia.py
 python run 2_chunking_embedding_ingestion.py
-streamlit run 3_chatbot.py
+python -m streamlit run 3_chatbot.py
+```
+
+Or alternatively:
+
+```
+cd Local-RAG-with-Ollama
+python -m streamlit run 3_chatbot.py
 ```
 
 <h2>Further reading</h2>
