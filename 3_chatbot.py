@@ -6,15 +6,13 @@ from dotenv import load_dotenv
 import streamlit as st
 
 # import langchain
-from langchain.agents import AgentExecutor
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain.agents import create_tool_calling_agent
-from langchain import hub
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
 # load environment variables
 load_dotenv()  
@@ -33,6 +31,8 @@ vector_store = Chroma(
     persist_directory=os.getenv("DATABASE_LOCATION"), 
 )
 
+retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+
 
 ###############################   INITIALIZE CHAT MODEL   #######################################################################################################
 
@@ -42,27 +42,27 @@ llm = init_chat_model(
     temperature=0
 )
 
-       
 
+###############################   CREATE RAG CHAIN   ###########################################################################################################
 
-# pulling prompt from hub
-prompt = PromptTemplate.from_template("""                                
-You are a helpful assistant. You will be provided with a query and a chat history.
-Your task is to retrieve relevant information from the vector store and provide a response.
-For this you use the tool 'retrieve' to get the relevant information.
-                                      
-The query is as follows:                    
-{input}
+def format_docs(docs):
+    """Format retrieved documents for display."""
+    serialized = ""
+    for doc in docs:
+        serialized += f"Source: {doc.metadata['source']}\nContent: {doc.page_content}\n\n"
+    return serialized
 
-The chat history is as follows:
-{chat_history}
+# Create the RAG prompt template (for when context is available)
+rag_template = """You are a helpful assistant. You will be provided with a query and retrieved context.
+Your task is to provide a response based on the retrieved information.
+
+The query is as follows:
+{query}
+
+The retrieved context is as follows:
+{context}
 
 Please provide a concise and informative response based on the retrieved information.
-If you don't know the answer, say "I don't know" (and don't provide a source).
-                                      
-You can use the scratchpad to store any intermediate results or notes.
-The scratchpad is as follows:
-{agent_scratchpad}
 
 For every piece of information you provide, also provide the source.
 
@@ -70,34 +70,42 @@ Return text as follows:
 
 <Answer to the question>
 Source: source_url
-""")
+"""
+
+rag_prompt = ChatPromptTemplate.from_template(rag_template)
+
+# Create the general knowledge prompt template (for when no context is available)
+general_template = """You are a helpful assistant. Answer the user's question to the best of your ability.
+
+The query is as follows:
+{query}
+
+Provide a clear and informative response. Since this is a general knowledge question (not from your knowledge base), you don't need to provide a source.
+"""
+
+general_prompt = ChatPromptTemplate.from_template(general_template)
+
+# Create the RAG chain
+rag_chain = (
+    {"context": retriever | format_docs, "query": RunnablePassthrough()}
+    | rag_prompt
+    | llm
+    | StrOutputParser()
+)
+
+# Create the general knowledge chain
+general_chain = (
+    {"query": RunnablePassthrough()}
+    | general_prompt
+    | llm
+    | StrOutputParser()
+)
 
 
-# creating the retriever tool
-@tool
-def retrieve(query: str):
-    """Retrieve information related to a query."""
-    retrieved_docs = vector_store.similarity_search(query, k=2)
+###############################   INITIATE STREAMLIT APP   ####################################################################################################
 
-    serialized = ""
-
-    for doc in retrieved_docs:
-        serialized += f"Source: {doc.metadata['source']}\nContent: {doc.page_content}\n\n"
-
-    return serialized
-
-# combining all tools
-tools = [retrieve]
-
-# initiating the agent
-agent = create_tool_calling_agent(llm, tools, prompt)
-
-# create the agent executor
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
-
-# initiating streamlit app
-st.set_page_config(page_title="Agentic RAG Chatbot", page_icon="🦜")
-st.title("🦜 Agentic RAG Chatbot")
+st.set_page_config(page_title="RAG Chatbot", page_icon="🦜")
+st.title("🦜 RAG Chatbot")
 
 # initialize chat history
 if "messages" not in st.session_state:
@@ -126,15 +134,29 @@ if user_question:
 
         st.session_state.messages.append(HumanMessage(user_question))
 
-
-    # invoking the agent
-    result = agent_executor.invoke({"input": user_question, "chat_history":st.session_state.messages})
-
-    ai_message = result["output"]
-
-    # adding the response from the llm to the screen (and chat)
+    # invoking the chain
     with st.chat_message("assistant"):
-        st.markdown(ai_message)
-
+        response_placeholder = st.empty()
+        
+        # First, retrieve documents to check if relevant context exists
+        retrieved_docs = retriever.invoke(user_question)
+        
+        # Check if we have relevant context
+        # We consider context relevant if we have documents with meaningful content
+        has_relevant_context = False
+        context_text = ""
+        
+        if retrieved_docs:
+            context_text = format_docs(retrieved_docs)
+            # Check if context has meaningful content (not just empty or very short)
+            if context_text and len(context_text.strip()) > 50:
+                has_relevant_context = True
+        
+        # Use appropriate chain based on whether we have relevant context
+        if has_relevant_context:
+            ai_message = rag_chain.invoke(user_question)
+        else:
+            ai_message = general_chain.invoke(user_question)
+        
+        response_placeholder.markdown(ai_message)
         st.session_state.messages.append(AIMessage(ai_message))
-
