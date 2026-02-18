@@ -73,6 +73,12 @@ COLLECTION_NAME = "rag_data"
 
 ## Executing the Scripts
 
+**Important:** Make sure you are in the project directory before running any commands:
+
+```bash
+cd rag-chatbot-ollama-lab
+```
+
 ### Option 1: Using the alternative Wikipedia scraping (No API key required)
 
 ```bash
@@ -88,6 +94,8 @@ python 1_scraping_wikipedia.py
 python 2_chunking_embedding_ingestion.py
 python -m streamlit run 3_chatbot.py
 ```
+
+**Note:** If you get a "File does not exist" error, ensure you're in the correct project directory.
 
 ### Option 3: Using batch file (Windows)
 
@@ -147,6 +155,16 @@ ANTHROPIC_API_KEY = "anthropic-your-key"
 6. **Generation:** Uses the LLM to generate answers based on retrieved context
 
 ## Troubleshooting
+
+### Error: File does not exist
+
+If you see an error like `Error: Invalid value: File does not exist: 3_chatbot.py`, make sure you are in the project directory:
+
+```bash
+cd rag-chatbot-ollama-lab
+```
+
+Then run the command again.
 
 ### ModuleNotFoundError: No module named 'streamlit'
 
